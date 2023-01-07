@@ -1,0 +1,269 @@
+---
+title: "Inspect DaNewsRoom Sentiment"
+author: "Anton Drasbæk"
+date: "1/3/2023"
+output: html_document
+---
+
+# Setup
+## Load Packages
+```{r setup, include=FALSE}
+pacman::p_load(tidyverse, tidytext, wordcloud)
+```
+
+## Load Data
+```{r}
+data <- read.csv("/Users/antondrasbaek/Desktop/danews-sentiment-data.csv")
+head(data)
+```
+
+
+# Process Data
+## Remove "Berlingske"
+We choose to remove news from Berlingske from our dataset. The reasoning is that this dataset only had Berlingske news from a specific year (2014) whereas the other papers had stories across several years. This introduces a discrepancy across the variables that we cannot account for. Additionally, Berlingske is the only clearly politically-biased paper in the selection (liberal). Although it would be interesting to compare with one that is biased in the other political direction (e.g., Politikken or Information), such papers were not available in our dataset.
+```{r}
+data <- data %>% 
+  filter(domain != "berlingske")
+```
+
+
+# Inspect Data
+
+## Plot Sentiment by Media
+```{r}
+data %>% 
+  # re-leveling "sentiment" to have neutral first
+  mutate(sentiment = fct_relevel(sentiment, "neutral", "negative", "positive")) %>%
+  
+  # initialize plot
+  ggplot(aes(x = domain, fill = sentiment)) +
+  
+  # plot histogram
+    geom_histogram(stat = "count", position = "dodge") +
+  
+  # change colors of the bars
+    scale_fill_manual(values=c("#d7d7d7", "#ff7678", "#a0ff9f")) +
+  
+  # change axis titles
+    labs(x = "Domain",
+       y = "Count") +
+  
+  # change axis labels
+    scale_x_discrete(labels=c("bt" = "BT", 
+                              "dr" = "DR", 
+                              "ekstrabladet" = "Ekstra Bladet",
+                              "seoghoer" = "Se og Hør",
+                              "tv2" = "TV2")) +
+  # change legend title
+    guides(fill=guide_legend(title="Sentiment")) +
+  
+  # change theme elements such as font, text locations and background
+    theme(text = element_text(family = "Libre Franklin"),
+        plot.margin = margin(0.25,0.25,0.5,0.5, "cm"),
+        axis.title.x = element_text(vjust = -3),
+        axis.title.y = element_text(vjust = 5),
+        axis.title = element_text(size = 15, color = "darkgrey"),
+        axis.text = element_text(size = 15),
+        axis.line = element_line(colour = "darkgrey"), 
+        axis.ticks = element_line(colour = "darkgrey", size = 0.7),
+        legend.title = element_text(size = 11),
+        legend.text = element_text(colour = "darkgrey", size = 10),
+        legend.position = c(0.94, 0.91),
+        panel.background = element_blank())
+
+```
+
+## Plot Analytic by Media (But only for subjective articles)
+```{r}
+data %>% 
+  ggplot(aes(x = domain, fill = analytic)) +
+    geom_histogram(stat = "count")
+```
+
+## Word Frequencies
+
+# Function for extacting word frequencies
+```{r}
+# create function for word_frequency computations
+word_counter <- function(data, selected_sentiment) {
+  
+  # filter to only include selected sentiment (make defensive so that it produces an error message if a wrong sentiment is given)
+  if (selected_sentiment %in% data$sentiment) {
+    data <- data %>% 
+      filter(sentiment == selected_sentiment)
+      
+      # Split the text column into individual words
+      words <- data %>%
+        unnest_tokens(word, title)
+  
+      # Remove stopwords from worst list
+      words <- words %>% 
+        filter(!(word %in% stop_words$stopwords))
+  
+      # Count the frequency of each word
+      word_counts <- words %>%
+        count(word, sort = TRUE)
+  
+      # Print the most common words
+      print(word_counts)
+  } else {
+    print("The selected sentiment is not valid. Only valid sentiments are neutral, negative and positive")
+  }
+}
+
+# checking that defensive function works
+word_counter(data, "happy")
+```
+
+
+# Most Frequent words table
+```{r}
+# Load in stopword list
+stop_words <- read.csv("/Users/antondrasbaek/Desktop/danish_stopwords.csv")
+
+# obtain top words for all sentiments
+top_positive <- word_counter(data, "positive")
+top_negative <- word_counter(data, "neutral")
+top_neutral <- word_counter(data, "negative")
+
+```
+
+
+# Create word comparison cloud
+```{r}
+pos_tf <- word_counter(data, "positive")
+neg_tf <- word_counter(data, "negative")
+
+wordcloud(words = top_positive$word, 
+          freq = top_positive$n, 
+          min.freq = 1, 
+          max.words = 100,
+          random_order = FALSE,
+          rot.per = 0.25,
+          scale=c(1,0.5),
+          size = 1.6,
+          shape = "circle",
+          colors = brewer.pal(10, "Greens"))
+
+# Assume that the two term frequency matrices are called "pos_tf" and "neg_tf"
+
+# Merge the two matrices
+merged_tf <- merge(pos_tf, neg_tf, by="word", all=TRUE)
+
+# Rename the "n.x" and "n.y" columns to "pos_freq" and "neg_freq" respectively
+names(merged_tf)[names(merged_tf) == "n.x"] <- "pos_freq"
+names(merged_tf)[names(merged_tf) == "n.y"] <- "neg_freq"
+
+# If a word only appears in one of the matrices, the corresponding "pos_freq" or "neg_freq" value will be NA
+# You can fill these with 0 using the following line of code:
+merged_tf[is.na(merged_tf)] <- 0
+
+# The resulting matrix will have three columns: "word", "pos_freq", and "neg_freq"
+# It will contain all words from both the positive and negative term frequency matrices,
+# with the respective frequencies from each type of headline
+
+
+# Assume that the data frame is called "df" and the first column is called "index"
+
+# Convert the data frame to a matrix and use the "index" column as the row names
+matrix <- as.matrix(merged_tf[, -1])
+row.names(matrix) <- merged_tf$word
+
+# The resulting matrix will have the same values as the data frame, with the "index" column as the row names
+
+
+# create word comparison cloud
+comparison.cloud(matrix, 
+                 max.words = 200,
+                 colors = c("#a0ff9f", "#ff7678"))
+
+```
+
+
+
+# Statistical Tests
+
+## Chi-square test
+The chi-square test for independence will test whether there is a significant association between the two variables in the data (i.e. whether the proportions of each sentiment are significantly different between the domains).
+```{r}
+data <- data %>% filter(domain != "seoghoer")
+
+data$sentiment <- as.factor(data$sentiment)
+data$domain <- as.factor(data$domain)
+
+# First, create a contingency table of the counts of each combination of domain and sentiment
+cont_table <- table(data$domain, data$sentiment)
+
+# Then run the chi-square test
+chisq.test(cont_table)
+
+```
+
+
+```{r}
+# create function for word_frequency computations
+word_counter2 <- function(data, selected_domains) {
+  
+  # filter to only include selected sentiment (make defensive so that it produces an error message if a wrong sentiment is given)
+  if (selected_domains %in% data$domain) {
+    data <- data %>% 
+      filter(domain %in% selected_domains)
+      
+    # Split the text column into individual words
+    words <- data %>%
+      unnest_tokens(word, title)
+  
+    # Remove stopwords from worst list
+    words <- words %>% 
+      filter(!(word %in% stop_words$stopwords))
+  
+    # Count the frequency of each word
+    word_counts <- words %>%
+      count(word, sort = TRUE)
+  
+    # Print the most common words
+    print(word_counts)
+  } else {
+    print("The selected sentiment is not valid. Only valid sentiments are neutral, negative and positive")
+  }
+}
+
+```
+
+```{r}
+tabloid <- word_counter2(data, selected_domains = c("bt", "ekstrabladet"))
+public <- word_counter2(data, c("tv2", "dr"))
+
+# Merge the two matrices
+merged_tf <- merge(public, tabloid, by="word", all=TRUE)
+
+# Rename the "n.x" and "n.y" columns to "pos_freq" and "neg_freq" respectively
+names(merged_tf)[names(merged_tf) == "n.x"] <- "public"
+names(merged_tf)[names(merged_tf) == "n.y"] <- "tabloid"
+
+# If a word only appears in one of the matrices, the corresponding "pos_freq" or "neg_freq" value will be NA
+# You can fill these with 0 using the following line of code:
+merged_tf[is.na(merged_tf)] <- 0
+
+# The resulting matrix will have three columns: "word", "pos_freq", and "neg_freq"
+# It will contain all words from both the positive and negative term frequency matrices,
+# with the respective frequencies from each type of headline
+
+
+# Assume that the data frame is called "df" and the first column is called "index"
+
+# Convert the data frame to a matrix and use the "index" column as the row names
+matrix <- as.matrix(merged_tf[, -1])
+row.names(matrix) <- merged_tf$word
+
+# The resulting matrix will have the same values as the data frame, with the "index" column as the row names
+
+
+# create word comparison cloud
+comparison.cloud(matrix, 
+                 max.words = 100,
+                 colors = c("#39b3ff", "#CC99CC"))
+
+```
+
+
